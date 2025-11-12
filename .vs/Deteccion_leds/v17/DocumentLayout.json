@@ -1,0 +1,37 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\crist\\Desktop\\Proyecto Investigacion\\Deteccion_leds\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{1D7ABB76-648A-4E2A-8054-23E925C39657}|Deteccion_leds\\Deteccion_leds.pyproj|C:\\Users\\crist\\Desktop\\Proyecto Investigacion\\Deteccion_leds\\Deteccion_leds\\Deteccion_leds.py||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{1D7ABB76-648A-4E2A-8054-23E925C39657}|Deteccion_leds\\Deteccion_leds.pyproj|solutionrelative:Deteccion_leds\\Deteccion_leds.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 0,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "Deteccion_leds.py",
+              "DocumentMoniker": "C:\\Users\\crist\\Desktop\\Proyecto Investigacion\\Deteccion_leds\\Deteccion_leds\\Deteccion_leds.py",
+              "RelativeDocumentMoniker": "Deteccion_leds\\Deteccion_leds.py",
+              "ToolTip": "C:\\Users\\crist\\Desktop\\Proyecto Investigacion\\Deteccion_leds\\Deteccion_leds\\Deteccion_leds.py",
+              "RelativeToolTip": "Deteccion_leds\\Deteccion_leds.py",
+              "ViewState": "AgIAACQAAAAAAAAAAAAAADYAAAAXAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2025-10-08T19:35:55.482Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
