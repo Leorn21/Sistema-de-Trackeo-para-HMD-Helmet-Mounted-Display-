@@ -6,7 +6,7 @@ lower_bound = np.array([117, 0, 80])
 upper_bound = np.array([160, 165, 255])
 
 # --- 2. Inicia la captura de video ---
-cap = cv2.VideoCapture(r'C:\Users\crist\Desktop\Proyecto Investigacion\Imagenes\Video_LEDs.mp4') 
+cap = cv2.VideoCapture(r'') #AGREGAR RUTA DEL VIDEO ENTRE LAS COMILLAS
 
 if not cap.isOpened():
     print("Error: No se pudo abrir el archivo.")
@@ -49,3 +49,4 @@ while True:
 # --- 6. Liberar recursos ---
 cap.release()
 cv2.destroyAllWindows()
+
