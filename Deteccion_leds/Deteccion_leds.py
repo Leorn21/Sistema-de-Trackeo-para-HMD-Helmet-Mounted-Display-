@@ -2,187 +2,175 @@ import cv2
 import numpy as np
 import itertools 
 
-# --- CONFIGURACIÓN DE FILTROS ---
-MIN_AREA = 50   
+# --- CONFIGURACIÓN ---
+MIN_AREA = 50       
 MAX_AREA = 1000 
 MIN_POINTS = 5  
-MAX_LINE_ERROR = 260 #Area maxima del triangulo formado por los 3 leds
+MAX_LINE_ERROR = 260 
 
-# --- CLASE FILTRO DE KALMAN ---
+# Frames maximos permitidos sin deteccion antes de reiniciar el tracking
+MAX_LOST_FRAMES = 3  
+
+# --- CLASE KALMAN ---
 class LedKalman:
     def __init__(self, initial_point):
-        # Inicializamos un filtro de Kalman estandar de OpenCV
-        # 4 variables de estado (x, y, dx, dy) -> Posicion y Velocidad
-        # 2 variables de medicion (x, y) -> Solo medimos posicion
         self.kalman = cv2.KalmanFilter(4, 2)
-        
-        # Matriz de Medicion (H): Relaciona estado con medicion
-        self.kalman.measurementMatrix = np.array([[1,0,0,0],
-                                                  [0,1,0,0]], np.float32)
-        
-        # Matriz de Transicion (F): Como cambia el estado (x = x + dx)
-        self.kalman.transitionMatrix = np.array([[1,0,1,0],
-                                                 [0,1,0,1],
-                                                 [0,0,1,0],
-                                                 [0,0,0,1]], np.float32)
-        
-        # Covarianza de Proceso (Q): Ruido del sistema (que tan suave es el movimiento)
+        self.kalman.measurementMatrix = np.array([[1,0,0,0], [0,1,0,0]], np.float32)
+        self.kalman.transitionMatrix = np.array([[1,0,1,0], [0,1,0,1], [0,0,1,0], [0,0,0,1]], np.float32)
         self.kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.03
-        
-        # Estado inicial
         self.kalman.statePre = np.array([[initial_point[0]], [initial_point[1]], [0], [0]], np.float32)
         self.kalman.statePost = np.array([[initial_point[0]], [initial_point[1]], [0], [0]], np.float32)
 
     def predict(self):
-        # Predice la siguiente posicion basandose en la velocidad actual
         prediction = self.kalman.predict()
-        return (int(prediction[0]), int(prediction[1]))
+        return (int(prediction[0].item()), int(prediction[1].item()))
 
     def correct(self, point):
-        # Corrige la prediccion con la medicion real (si existe)
         measurement = np.array([[np.float32(point[0])], [np.float32(point[1])]])
         self.kalman.correct(measurement)
         return point
+    
+    @property
+    def position(self):
+        return (int(self.kalman.statePost[0].item()), int(self.kalman.statePost[1].item()))
 
-# --- Calcular error de alineacion ---
 def calcular_error_linea(p1, p2, p3):
     area = abs(p1[0]*(p2[1] - p3[1]) + p2[0]*(p3[1] - p1[1]) + p3[0]*(p1[1] - p2[1])) * 0.5
     return area
 
-# --- 1. Definir valores HSV ---
+# --- INICIO ---
 lower_bound = np.array([117, 0, 80])
 upper_bound = np.array([160, 165, 255])
 
-# --- 2. Inicia la captura de video ---
-cap = cv2.VideoCapture(r'C:\Users\crist\Desktop\Proyecto Investigacion\Imagenes\Video_LEDs.mp4') 
+# RUTA DEL VIDEO
+cap = cv2.VideoCapture(r'E:\0Backup\Proyects\Proyecto Investigacion\Imagenes\Video_LEDs.mp4') 
 
 if not cap.isOpened():
-    print("Error: No se pudo abrir el archivo.")
+    print("Error al abrir video.")
     exit()
 
-
-# Variables de estado del Sistema
-kalman_filters = []     # Guarda 3 filtros (uno por LED)
-initialized = False     # Bandera para saber si ya fijamos los LEDs
+kalman_filters = []
+initialized = False     
+lost_frames_count = 0 # Contador para el timeout
 
 while True:
     ret, frame = cap.read()
-    if not ret:
-        print("Fin del video.")
-        break
+    if not ret: break
 
-    # --- 3. Preprocesamiento ---
+    # --- Preprocesamiento ---
     hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv_frame, lower_bound, upper_bound)
     kernel = np.ones((5, 5), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
-    # --- 4. Detección de Candidatos ---
+    # --- Detección ---
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidates = []
-    
     for cnt in contours:
         area = cv2.contourArea(cnt)
         if area > MIN_AREA and area < MAX_AREA and len(cnt) >= MIN_POINTS:
             ellipse = cv2.fitEllipse(cnt)
-            center = (int(ellipse[0][0]), int(ellipse[0][1]))
-            candidates.append({'center': center, 'ellipse': ellipse, 'area': area})
+            candidates.append({'center': (int(ellipse[0][0]), int(ellipse[0][1])), 'ellipse': ellipse})
 
-    # --- 5. FILTRO GEOMÉTRICO ---
-    detected_leds = []
-    
-    # Logica para encontrar el trio valido
-    if len(candidates) >= 3:
-        if len(candidates) == 3:
-            # Si hay 3, verificamos error
-            error = calcular_error_linea(candidates[0]['center'], candidates[1]['center'], candidates[2]['center'])
-            if error < MAX_LINE_ERROR:
-                detected_leds = candidates
-        else:
-            # Si hay mas de 3, buscamos la mejor combinacion
+    # --- Tracking ---
+    display_points = []
+    status_msg = "BUSCANDO..."
+    color_status = (0, 165, 255)
+
+    if not initialized:
+        # FASE DE BÚSQUEDA (Reiniciado)
+        lost_frames_count = 0 
+        if len(candidates) >= 3:
             min_error = float('inf')
-            best_combination = []
+            best_trio = []
             for combo in itertools.combinations(candidates, 3):
-                p1 = combo[0]['center']
-                p2 = combo[1]['center']
-                p3 = combo[2]['center']
-                error = calcular_error_linea(p1, p2, p3)
-                if error < min_error:
-                    min_error = error
-                    best_combination = combo
+                p1, p2, p3 = combo[0]['center'], combo[1]['center'], combo[2]['center']
+                err = calcular_error_linea(p1, p2, p3)
+                if err < min_error:
+                    min_error = err
+                    best_trio = list(combo)
             
             if min_error < MAX_LINE_ERROR:
-                detected_leds = list(best_combination)
+                best_trio.sort(key=lambda x: x['center'][0])
+                kalman_filters = [LedKalman(led['center']) for led in best_trio]
+                initialized = True
+                print("Tracking Iniciado/Reiniciado.")
 
-    # --- 6. INTEGRACIÓN KALMAN ---
-    display_points = [] # Puntos finales a dibujar
-    is_prediction = False
-
-    # ESCENARIO 1: Deteccion Exitosa (Tenemos 3 LEDs validos y alineados)
-    if len(detected_leds) == 3:
-        # Ordenamos por X para asegurar que el Kalman 0 sea el LED izquierdo
-        detected_leds.sort(key=lambda x: x['center'][0])
-        
-        if not initialized:
-            # Primera vez que vemos los LEDs: Inicializamos los 3 filtros
-            kalman_filters = []
-            for led in detected_leds:
-                kf = LedKalman(led['center'])
-                kalman_filters.append(kf)
-            initialized = True
-            print("Sistema Estabilizado: Tracking Iniciado.")
-
-        # Actualizamos los filtros con las posiciones reales
-        for i, led in enumerate(detected_leds):
-            # 1. Predecir (siempre necesario)
-            kalman_filters[i].predict()
-            # 2. Corregir con el dato real
-            corrected_point = kalman_filters[i].correct(led['center'])
-            display_points.append(corrected_point) # Usamos el punto suavizado
-        
-        is_prediction = False
-
-    # ESCENARIO 2: Fallo de Deteccion (Falso Negativo)
     else:
-        if initialized:
-            # Si ya habiamos iniciado, usamos Kalman para rellenar el hueco (PREDICCION)
-            is_prediction = True
-            for kf in kalman_filters:
-                # Solo predecimos (sin correccion porque no hay dato)
-                predicted_point = kf.predict()
-                display_points.append(predicted_point)
-        else:
-            # Si aun no inicializamos y no hay 3 leds, no podemos hacer nada
-            display_points = []
+        # FASE DE SEGUIMIENTO
+        predictions = [kf.predict() for kf in kalman_filters]
 
-    # --- 7. DIBUJADO ---
-    
-    # 7.A Dibujar Elipses Reales (Si existen)
-    for led in detected_leds:
-        cv2.ellipse(frame, led['ellipse'], (0, 255, 0), 2)
+        matches = [None, None, None] 
+        for i, pred in enumerate(predictions):
+            closest = None
+            min_dist = 50 
+            for cand in candidates:
+                dist = np.linalg.norm(np.array(pred) - np.array(cand['center']))
+                if dist < min_dist:
+                    min_dist = dist
+                    closest = cand
+            matches[i] = closest
 
-    # 7.B Dibujar Resultado Kalman (Puntos y Líneas de Tracking)
-    if len(display_points) == 3:
-        pts = np.array(display_points, np.int32)
+        found_indices = [i for i, m in enumerate(matches) if m is not None]
         
-        # Color: Verde si es Deteccion Real, Rojo si es Prediccion (Memoria)
-        color = (0, 0, 255) if is_prediction else (0, 255, 0)
-        line_color = (0, 0, 255) if is_prediction else (255, 0, 0)
+        # --- Lógica de Timeout (Reinicio) ---
+        if len(found_indices) < 2:
+            # Si vemos menos de 2 LEDs, estamos perdiendo el track
+            lost_frames_count += 1
+            status_msg = f"PERDIENDO TRACK... ({lost_frames_count}/{MAX_LOST_FRAMES})"
+            color_status = (0, 0, 255)
+            
+            if lost_frames_count > MAX_LOST_FRAMES:
+                #Reiniciamos el sistema
+                initialized = False
+                kalman_filters = []
+                print("Tracking perdido. Reiniciando búsqueda...")
+        else:
+            # Si vemos 2 o 3, el tracking es sólido
+            lost_frames_count = 0
+            
+            if len(found_indices) == 3:
+                status_msg = "TRACKING: SOLIDO (3/3)"
+                color_status = (0, 255, 0)
+                for i in range(3):
+                    kalman_filters[i].correct(matches[i]['center'])
+                    cv2.ellipse(frame, matches[i]['ellipse'], (0, 255, 0), 2)
 
-        # Dibujar linea
-        cv2.polylines(frame, [pts], False, line_color, 2)
+            elif len(found_indices) == 2:
+                status_msg = "TRACKING: INFERIDO (2/3)"
+                color_status = (0, 255, 255)
+                
+                p_found = {i: matches[i]['center'] for i in found_indices}
+                
+                for idx in found_indices:
+                    kalman_filters[idx].correct(matches[idx]['center'])
+                    cv2.ellipse(frame, matches[idx]['ellipse'], (0, 255, 0), 2)
 
-        # Dibujar puntos centrales (Tracking)
-        for pt in display_points:
-            cv2.circle(frame, pt, 5, color, -1)
+                missing_idx = [x for x in [0,1,2] if x not in found_indices][0]
+                inferred_point = None
 
-        # Texto de estado
-        status = "PREDICCION (MEMORIA)" if is_prediction else "TRACKING (REAL)"
-        cv2.putText(frame, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+                if missing_idx == 2: 
+                    vec = np.array(p_found[1]) - np.array(p_found[0])
+                    inferred_point = tuple((np.array(p_found[1]) + vec).astype(int))
+                elif missing_idx == 0: 
+                    vec = np.array(p_found[1]) - np.array(p_found[2])
+                    inferred_point = tuple((np.array(p_found[1]) + vec).astype(int))
+                elif missing_idx == 1: 
+                    mid = (np.array(p_found[0]) + np.array(p_found[2])) / 2
+                    inferred_point = tuple(mid.astype(int))
 
-    cv2.imshow('Video con Kalman', frame)
-    cv2.imshow('Mask', mask)
+                kalman_filters[missing_idx].correct(inferred_point)
+
+        if initialized: # Solo dibujar si seguimos en modo tracking
+            display_points = [kf.position for kf in kalman_filters]
+            pts = np.array(display_points, np.int32)
+            cv2.polylines(frame, [pts], False, (255, 0, 0), 2)
+            for pt in display_points:
+                cv2.circle(frame, pt, 4, (0, 0, 255), -1)
+
+    cv2.putText(frame, status_msg, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_status, 2)
+    cv2.imshow('Tracking con Reinicio', frame)
 
     if cv2.waitKey(33) & 0xFF == ord('q'):
         break
