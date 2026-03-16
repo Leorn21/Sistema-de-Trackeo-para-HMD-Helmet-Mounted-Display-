@@ -22,7 +22,7 @@ class LedKalman:
         self.kalman.statePost = np.array([[initial_point[0]], [initial_point[1]], [0], [0]], np.float32)
 
     def predict(self):
-        prediction = self.kalman.predict()
+        prediction = self.kalman.predict()          
         return (int(prediction[0].item()), int(prediction[1].item()))
 
     def correct(self, point):
@@ -52,10 +52,14 @@ if not cap.isOpened():
 kalman_filters = []
 initialized = False     
 lost_frames_count = 0 # Contador para el timeout
+solid_tracking_frames = 0
+inferred_tracking_frames = 0
+total_frames = 0
 
 while True:
     ret, frame = cap.read()
     if not ret: break
+    total_frames += 1
 
     # --- Preprocesamiento ---
     hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -133,6 +137,7 @@ while True:
             if len(found_indices) == 3:
                 status_msg = "TRACKING: SOLIDO (3/3)"
                 color_status = (0, 255, 0)
+                solid_tracking_frames += 1
                 for i in range(3):
                     kalman_filters[i].correct(matches[i]['center'])
                     cv2.ellipse(frame, matches[i]['ellipse'], (0, 255, 0), 2)
@@ -140,6 +145,7 @@ while True:
             elif len(found_indices) == 2:
                 status_msg = "TRACKING: INFERIDO (2/3)"
                 color_status = (0, 255, 255)
+                inferred_tracking_frames += 1
                 
                 p_found = {i: matches[i]['center'] for i in found_indices}
                 
@@ -177,3 +183,12 @@ while True:
 
 cap.release()
 cv2.destroyAllWindows()
+
+# --- Métricas de Tracking ---
+if total_frames > 0:
+    percent_solido = (solid_tracking_frames / total_frames) * 100
+    percent_inferido = (inferred_tracking_frames / total_frames) * 100
+    print(f"\n--- Resultados del Tracking ---")
+    print(f"Total de Frames: {total_frames}")
+    print(f"Tracking Solido: {solid_tracking_frames} frames ({percent_solido:.2f}%) ")
+    print(f"Tracking Inferido: {inferred_tracking_frames} frames ({percent_inferido:.2f}%)")
