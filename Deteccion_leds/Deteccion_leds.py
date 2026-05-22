@@ -1,15 +1,17 @@
 import cv2
 import numpy as np
 import itertools 
+from scipy.optimize import linear_sum_assignment  # <--- SÓLO SE AGREGA ESTO
 
 # --- CONFIGURACIÓN ---
-MIN_AREA = 50       
-MAX_AREA = 1000 
+MIN_AREA = 20
+MAX_AREA = 600
 MIN_POINTS = 5  
-MAX_LINE_ERROR = 260 
+MAX_LINE_ERROR = 200
+LED_COUNT = 6
 
 # Frames maximos permitidos sin deteccion antes de reiniciar el tracking
-MAX_LOST_FRAMES = 3  
+MAX_LOST_FRAMES = 6  
 
 # --- CLASE KALMAN ---
 class LedKalman:
@@ -34,16 +36,24 @@ class LedKalman:
     def position(self):
         return (int(self.kalman.statePost[0].item()), int(self.kalman.statePost[1].item()))
 
-def calcular_error_linea(p1, p2, p3):
-    area = abs(p1[0]*(p2[1] - p3[1]) + p2[0]*(p3[1] - p1[1]) + p3[0]*(p1[1] - p2[1])) * 0.5
-    return area
+def calcular_error_linea(puntos):
+    coords = np.array(puntos, dtype=np.float32)
+    if len(coords) < 2:
+        return float('inf')
+    vx, vy, x0, y0 = cv2.fitLine(coords, cv2.DIST_L2, 0, 0.01, 0.01)
+    vx, vy, x0, y0 = vx.item(), vy.item(), x0.item(), y0.item()
+    denom = max((vx * vx + vy * vy) ** 0.5, 1e-6)
+    diffs = coords - np.array([x0, y0], dtype=np.float32)
+    dists = np.abs(diffs[:, 0] * vy - diffs[:, 1] * vx) / denom
+    return float(dists.mean())
 
 # --- INICIO ---
-lower_bound = np.array([117, 0, 80])
-upper_bound = np.array([160, 165, 255])
+# LEDs blancos: muy brillante y baja saturacion
+lower_bound = np.array([0, 0, 245])
+upper_bound = np.array([179, 35, 255])
 
 # RUTA DEL VIDEO
-cap = cv2.VideoCapture(r'E:\0Backup\Proyects\Proyecto Investigacion\Imagenes\Video_LEDs.mp4') 
+cap = cv2.VideoCapture(r'E:\0Backup\Proyects\Proyecto Investigacion\Deteccion_leds\Videos\Video_LEDs_nuevo.mp4') 
 
 if not cap.isOpened():
     print("Error al abrir video.")
@@ -85,42 +95,50 @@ while True:
     if not initialized:
         # FASE DE BÚSQUEDA (Reiniciado)
         lost_frames_count = 0 
-        if len(candidates) >= 3:
+        if len(candidates) >= LED_COUNT:
             min_error = float('inf')
-            best_trio = []
-            for combo in itertools.combinations(candidates, 3):
-                p1, p2, p3 = combo[0]['center'], combo[1]['center'], combo[2]['center']
-                err = calcular_error_linea(p1, p2, p3)
+            best_set = []
+            for combo in itertools.combinations(candidates, LED_COUNT):
+                points = [item['center'] for item in combo]
+                err = calcular_error_linea(points)
                 if err < min_error:
                     min_error = err
-                    best_trio = list(combo)
+                    best_set = list(combo)
             
             if min_error < MAX_LINE_ERROR:
-                best_trio.sort(key=lambda x: x['center'][0])
-                kalman_filters = [LedKalman(led['center']) for led in best_trio]
+                best_set.sort(key=lambda x: x['center'][0])
+                kalman_filters = [LedKalman(led['center']) for led in best_set]
                 initialized = True
                 print("Tracking Iniciado/Reiniciado.")
 
     else:
         # FASE DE SEGUIMIENTO
         predictions = [kf.predict() for kf in kalman_filters]
+        matches = [None] * LED_COUNT
 
-        matches = [None, None, None] 
-        for i, pred in enumerate(predictions):
-            closest = None
-            min_dist = 50 
-            for cand in candidates:
-                dist = np.linalg.norm(np.array(pred) - np.array(cand['center']))
-                if dist < min_dist:
-                    min_dist = dist
-                    closest = cand
-            matches[i] = closest
+        # --- SE INCOPORA EL ALGORITMO HÚNGARO MANTENIENDO TU LÓGICA ---
+        if len(candidates) > 0:
+            pred_arr = np.array(predictions, dtype=np.float32)
+            cand_arr = np.array([c['center'] for c in candidates], dtype=np.float32)
+            
+            # Matriz de distancias
+            dist_matrix = np.linalg.norm(pred_arr[:, None, :] - cand_arr[None, :, :], axis=2)
+            
+            # Resolución óptima global
+            row_ind, col_ind = linear_sum_assignment(dist_matrix)
+            
+            # Se mantiene tu umbral original estricto de min_dist = 50 píxeles
+            for p_idx, c_idx in zip(row_ind, col_ind):
+                if dist_matrix[p_idx, c_idx] < 50:
+                    matches[p_idx] = candidates[c_idx]
+        # -------------------------------------------------------------
 
         found_indices = [i for i, m in enumerate(matches) if m is not None]
         
         # --- Lógica de Timeout (Reinicio) ---
-        if len(found_indices) < 2:
-            # Si vemos menos de 2 LEDs, estamos perdiendo el track
+        min_found = max(LED_COUNT - 2, 1)
+        if len(found_indices) < min_found:
+            # Si vemos menos de LEDs minimos, estamos perdiendo el track
             lost_frames_count += 1
             status_msg = f"PERDIENDO TRACK... ({lost_frames_count}/{MAX_LOST_FRAMES})"
             color_status = (0, 0, 255)
@@ -131,42 +149,25 @@ while True:
                 kalman_filters = []
                 print("Tracking perdido. Reiniciando búsqueda...")
         else:
-            # Si vemos 2 o 3, el tracking es sólido
+            # Si vemos la mayoria, el tracking es sólido
             lost_frames_count = 0
             
-            if len(found_indices) == 3:
-                status_msg = "TRACKING: SOLIDO (3/3)"
+            if len(found_indices) == LED_COUNT:
+                status_msg = f"TRACKING: SOLIDO ({LED_COUNT}/{LED_COUNT})"
                 color_status = (0, 255, 0)
                 solid_tracking_frames += 1
-                for i in range(3):
+                for i in range(LED_COUNT):
                     kalman_filters[i].correct(matches[i]['center'])
                     cv2.ellipse(frame, matches[i]['ellipse'], (0, 255, 0), 2)
 
-            elif len(found_indices) == 2:
-                status_msg = "TRACKING: INFERIDO (2/3)"
+            elif len(found_indices) >= min_found:
+                status_msg = f"TRACKING: INFERIDO ({len(found_indices)}/{LED_COUNT})"
                 color_status = (0, 255, 255)
                 inferred_tracking_frames += 1
-                
-                p_found = {i: matches[i]['center'] for i in found_indices}
-                
+
                 for idx in found_indices:
                     kalman_filters[idx].correct(matches[idx]['center'])
                     cv2.ellipse(frame, matches[idx]['ellipse'], (0, 255, 0), 2)
-
-                missing_idx = [x for x in [0,1,2] if x not in found_indices][0]
-                inferred_point = None
-
-                if missing_idx == 2: 
-                    vec = np.array(p_found[1]) - np.array(p_found[0])
-                    inferred_point = tuple((np.array(p_found[1]) + vec).astype(int))
-                elif missing_idx == 0: 
-                    vec = np.array(p_found[1]) - np.array(p_found[2])
-                    inferred_point = tuple((np.array(p_found[1]) + vec).astype(int))
-                elif missing_idx == 1: 
-                    mid = (np.array(p_found[0]) + np.array(p_found[2])) / 2
-                    inferred_point = tuple(mid.astype(int))
-
-                kalman_filters[missing_idx].correct(inferred_point)
 
         if initialized: # Solo dibujar si seguimos en modo tracking
             display_points = [kf.position for kf in kalman_filters]
