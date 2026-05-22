@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import itertools 
-from scipy.optimize import linear_sum_assignment  # <--- SÓLO SE AGREGA ESTO
+from scipy.optimize import linear_sum_assignment 
 
 # --- CONFIGURACIÓN ---
 MIN_AREA = 20
@@ -116,7 +116,6 @@ while True:
         predictions = [kf.predict() for kf in kalman_filters]
         matches = [None] * LED_COUNT
 
-        # --- SE INCOPORA EL ALGORITMO HÚNGARO MANTENIENDO TU LÓGICA ---
         if len(candidates) > 0:
             pred_arr = np.array(predictions, dtype=np.float32)
             cand_arr = np.array([c['center'] for c in candidates], dtype=np.float32)
@@ -124,10 +123,8 @@ while True:
             # Matriz de distancias
             dist_matrix = np.linalg.norm(pred_arr[:, None, :] - cand_arr[None, :, :], axis=2)
             
-            # Resolución óptima global
             row_ind, col_ind = linear_sum_assignment(dist_matrix)
             
-            # Se mantiene tu umbral original estricto de min_dist = 50 píxeles
             for p_idx, c_idx in zip(row_ind, col_ind):
                 if dist_matrix[p_idx, c_idx] < 50:
                     matches[p_idx] = candidates[c_idx]
