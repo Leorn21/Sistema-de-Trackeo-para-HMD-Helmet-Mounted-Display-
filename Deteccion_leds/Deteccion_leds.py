@@ -7,11 +7,11 @@ from scipy.optimize import linear_sum_assignment
 MIN_AREA = 20
 MAX_AREA = 600
 MIN_POINTS = 5  
-MAX_LINE_ERROR = 200
+MAX_LINE_ERROR = 450
 LED_COUNT = 6
 
 # Frames maximos permitidos sin deteccion antes de reiniciar el tracking
-MAX_LOST_FRAMES = 6  
+MAX_LOST_FRAMES = 12 
 
 # --- CLASE KALMAN ---
 class LedKalman:
@@ -98,18 +98,40 @@ while True:
         if len(candidates) >= LED_COUNT:
             min_error = float('inf')
             best_set = []
+            
+            # Si hay demasiados falsos positivos por el movimiento,lo limita para evitar explosión combinatoria
+            if len(candidates) > 12:
+                # Nos quedamos con los 12 más grandes o más nítidos si fuera necesario, 
+                candidates = candidates[:12]
+
             for combo in itertools.combinations(candidates, LED_COUNT):
                 points = [item['center'] for item in combo]
+                
+                # --- REGLA GEOMÉTRICA DE CONTROL ---
+                # Ordena los puntos por el eje X para medir distancias consecutivas
+                puntos_ordenados = sorted(points, key=lambda p: p[0])
+                
+                # Calcula la distancia máxima entre LEDs vecinos en este combo
+                distancias_vecinos = [
+                    np.linalg.norm(np.array(puntos_ordenados[j]) - np.array(puntos_ordenados[j+1]))
+                    for j in range(LED_COUNT - 1)
+                ]
+                
+                # Si la distancia entre LEDs vecinos es muy grande (ej. más de 180 píxeles), lo descarta.
+                if max(distancias_vecinos) > 100:
+                    continue
+                # -----------------------------------------
+
                 err = calcular_error_linea(points)
                 if err < min_error:
                     min_error = err
                     best_set = list(combo)
             
-            if min_error < MAX_LINE_ERROR:
+            if min_error < MAX_LINE_ERROR and len(best_set) == LED_COUNT:
                 best_set.sort(key=lambda x: x['center'][0])
                 kalman_filters = [LedKalman(led['center']) for led in best_set]
                 initialized = True
-                print("Tracking Iniciado/Reiniciado.")
+                print("Tracking Iniciado/Reiniciado con filtro geométrico estricto.")
 
     else:
         # FASE DE SEGUIMIENTO
@@ -126,9 +148,8 @@ while True:
             row_ind, col_ind = linear_sum_assignment(dist_matrix)
             
             for p_idx, c_idx in zip(row_ind, col_ind):
-                if dist_matrix[p_idx, c_idx] < 50:
+                if dist_matrix[p_idx, c_idx] < 80:
                     matches[p_idx] = candidates[c_idx]
-        # -------------------------------------------------------------
 
         found_indices = [i for i, m in enumerate(matches) if m is not None]
         
@@ -165,6 +186,24 @@ while True:
                 for idx in found_indices:
                     kalman_filters[idx].correct(matches[idx]['center'])
                     cv2.ellipse(frame, matches[idx]['ellipse'], (0, 255, 0), 2)
+
+        # --- REGLA DE REINICIO POR LED DESFASADO ---
+        if initialized:
+            posiciones_actuales = [kf.position for kf in kalman_filters]
+            
+            # Verificamos la distancia espacial entre filtros contiguos
+            for i in range(LED_COUNT - 1):
+                p1 = np.array(posiciones_actuales[i])
+                p2 = np.array(posiciones_actuales[i+1])
+                dist_vecinos = np.linalg.norm(p1 - p2)
+                
+                # Si un solo LED se dispara lejos del resto rompiendo la barra, abortamos el tracking
+                if dist_vecinos > 180:
+                    initialized = False
+                    kalman_filters = []
+                    print("Led detectado/predicho demasiado lejos de la estructura. Forzando reinicio.")
+                    break
+        # --------------------------------------------
 
         if initialized: # Solo dibujar si seguimos en modo tracking
             display_points = [kf.position for kf in kalman_filters]
