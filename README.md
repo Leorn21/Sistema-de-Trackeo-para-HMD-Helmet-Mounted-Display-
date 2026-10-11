@@ -41,3 +41,10 @@ pip install opencv-python numpy
 
 3)Ejecutar el script principal:
 python Deteccion_leds.py
+
+Opciones:
+--video RUTA          Video a procesar (por defecto Videos/Video_LEDs_nuevo.mp4)
+--model cv|ca         Kalman de velocidad constante (cv, por defecto) o aceleracion constante (ca)
+--sigma-accel N       Ruido de aceleracion del modelo cv (px/s^2)
+--sigma-jerk N        Ruido de jerk del modelo ca (px/s^3)
+--no-display          Procesa sin ventana e imprime solo las metricas (para comparar configuraciones)
