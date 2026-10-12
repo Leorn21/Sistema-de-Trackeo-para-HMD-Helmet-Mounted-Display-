@@ -357,7 +357,7 @@ def dibujar(frame, candidates, tracker, matched, inferred, status_msg, color_sta
 
 
 def procesar_video(video, model=KALMAN_MODEL, sigma_accel=SIGMA_ACCEL, sigma_jerk=SIGMA_JERK,
-                   display=True, verbose=True):
+                   display=True, verbose=True, on_frame=None):
     cap = cv2.VideoCapture(video)
     if not cap.isOpened():
         raise IOError(f"Error al abrir video: {video}")
@@ -405,6 +405,10 @@ def procesar_video(video, model=KALMAN_MODEL, sigma_accel=SIGMA_ACCEL, sigma_jer
                     color_status = (0, 0, 255)
 
         m['tiempo'] += time.perf_counter() - t0
+
+        # Permite a otros scripts (p. ej. la evaluacion de error) leer el estado de cada frame
+        if on_frame is not None:
+            on_frame(m['frames'], frame, tracker, candidates, matched)
 
         if display:
             dibujar(frame, candidates, tracker, matched, inferred, status_msg, color_status)

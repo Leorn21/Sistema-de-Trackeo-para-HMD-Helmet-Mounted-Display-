@@ -48,3 +48,17 @@ Opciones:
 --sigma-accel N       Ruido de aceleracion del modelo cv (px/s^2)
 --sigma-jerk N        Ruido de jerk del modelo ca (px/s^3)
 --no-display          Procesa sin ventana e imprime solo las metricas (para comparar configuraciones)
+
+-----Medicion del error de localizacion-----
+
+1) Anotar a mano el centro real de los LEDs en frames repartidos por el video:
+python anotar_leds.py --video ../Videos/Video_LEDs_nuevo.mp4 --n 40
+(Agregar --salteados para volver a anotar los frames que se saltearon con S.
+ Agregar --demo para mostrar la herramienta sin guardar nada: las marcas se imprimen en consola.)
+
+2) Comparar la anotacion con la salida del algoritmo (deteccion y Kalman):
+python evaluar_error.py --video ../Videos/Video_LEDs_nuevo.mp4
+
+3) (Opcional) Anotar los mismos frames una segunda vez para medir el error de la propia anotacion:
+python anotar_leds.py --video ../Videos/Video_LEDs_nuevo.mp4 --n 40 --out anotaciones/Video_LEDs_nuevo_b.csv
+python evaluar_error.py --video ../Videos/Video_LEDs_nuevo.mp4 --repetibilidad anotaciones/Video_LEDs_nuevo_b.csv
